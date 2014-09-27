@@ -13,4 +13,5 @@ const (
 	SMembers = "SMEMBERS"
 	Exists   = "EXISTS"
 	Watch    = "WATCH"
+	SUnion   = "SUNION"
 )

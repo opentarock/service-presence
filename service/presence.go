@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/garyburd/redigo/redis"
 
@@ -17,8 +18,11 @@ import (
 
 const (
 	presenceKeyPrefix = "presence.user"
-	defaultTImeout    = 60
+	defaultTimeout    = 5 * time.Minute
+	bucketResolution  = time.Minute
 )
+
+var numActiveBuckets = uint(defaultTimeout / bucketResolution)
 
 type presenceServiceHandlers struct {
 	redisConn redis.Conn
@@ -43,12 +47,14 @@ func (s *presenceServiceHandlers) SetUserStatusHandler() service.MessageHandler 
 
 		deviceString := makeDeviceString(request.GetDevice())
 		userKey := makeUserKey(request.GetUserId())
+		bucketKey := makeBucketKey(userKey, bucketTag(0))
 		deviceKey := makeUserDeviceKey(userKey, deviceString)
 		if request.GetStatus() == proto_presence.UpdateUserStatusRequest_ONLINE {
 			s.redisConn.Send(redisutil.Multi)
-			s.redisConn.Send(redisutil.SAdd, userKey, deviceString)
+			s.redisConn.Send(redisutil.SAdd, bucketKey, deviceString)
+			s.redisConn.Send(redisutil.Expire, bucketKey, uint(defaultTimeout.Seconds()))
 			s.redisConn.Send(redisutil.Incr, deviceKey)
-			s.redisConn.Send(redisutil.Expire, deviceKey, defaultTImeout)
+			s.redisConn.Send(redisutil.Expire, deviceKey, uint(defaultTimeout.Seconds()))
 			_, err = s.redisConn.Do(redisutil.Exec)
 			if err != nil {
 				return makeUpdatingUserPresenceError("online", err)
@@ -81,6 +87,15 @@ func makeUserKey(userId string) string {
 	return fmt.Sprintf("%s:%s", presenceKeyPrefix, userId)
 }
 
+func makeBucketKey(userKey string, bucket string) string {
+	return fmt.Sprintf("%s:%s", userKey, bucket)
+}
+
+func bucketTag(index int) string {
+	bucketTime := time.Now().Add(time.Duration(index) * bucketResolution)
+	return fmt.Sprintf("%d", bucketTime.Unix()/int64(bucketResolution.Seconds()))
+}
+
 func makeUserDeviceKey(userKey, deviceString string) string {
 	return fmt.Sprintf("%s:%s", userKey, deviceString)
 }
@@ -106,7 +121,8 @@ func (s *presenceServiceHandlers) GetUserDevicesHandler() service.MessageHandler
 		log.Printf("Getting devices for user [user_id=%s]", request.GetUserId())
 
 		userKey := makeUserKey(request.GetUserId())
-		deviceList, err := redis.Strings(s.redisConn.Do(redisutil.SMembers, userKey))
+		bucketKeys := activeBucketKeys(userKey, numActiveBuckets)
+		deviceList, err := redis.Strings(s.redisConn.Do(redisutil.SUnion, bucketKeys...))
 		if err != nil {
 			return makeGettingUserDevicesError(err)
 		}
@@ -132,6 +148,14 @@ func (s *presenceServiceHandlers) GetUserDevicesHandler() service.MessageHandler
 		}
 		return proto.CompositeMessage{Message: &response}
 	})
+}
+
+func activeBucketKeys(userKey string, num uint) []interface{} {
+	keys := make([]interface{}, 0, num)
+	for i := 0; i > -int(num); i-- {
+		keys = append(keys, makeBucketKey(userKey, bucketTag(i)))
+	}
+	return keys
 }
 
 func makeGettingUserDevicesError(err error) proto.CompositeMessage {
