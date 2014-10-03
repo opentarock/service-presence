@@ -3,15 +3,18 @@ package service
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"code.google.com/p/go.net/context"
+
 	"github.com/garyburd/redigo/redis"
+	log "gopkg.in/inconshreveable/log15.v2"
 
 	"github.com/opentarock/service-api/go/proto"
 	"github.com/opentarock/service-api/go/proto_errors"
 	"github.com/opentarock/service-api/go/proto_presence"
+	"github.com/opentarock/service-api/go/reqcontext"
 	"github.com/opentarock/service-api/go/service"
 	"github.com/opentarock/service-presence/util/redisutil"
 )
@@ -20,6 +23,8 @@ const (
 	presenceKeyPrefix = "presence.user"
 	defaultTimeout    = 5 * time.Minute
 	bucketResolution  = time.Minute
+
+	requestTimeout = 500 * time.Millisecond
 )
 
 var numActiveBuckets = uint(defaultTimeout / bucketResolution)
@@ -36,16 +41,27 @@ func NewPresenceServiceHandlers(conn redis.Conn) *presenceServiceHandlers {
 
 func (s *presenceServiceHandlers) SetUserStatusHandler() service.MessageHandler {
 	return service.MessageHandlerFunc(func(msg *proto.Message) proto.CompositeMessage {
+		ctx, cancel := context.WithTimeout(reqcontext.NewContext(context.Background(), msg), requestTimeout)
+		defer cancel()
+
+		logger := reqcontext.ContextLogger(ctx)
+
 		var request proto_presence.UpdateUserStatusRequest
 		err := msg.Unmarshal(&request)
 		if err != nil {
-			log.Println(err)
+			logger.Warn("Problem unmarshalling request", "error", err.Error())
 			return proto.CompositeMessage{
 				Message: proto_errors.NewMalformedMessage(request.GetMessageType()),
 			}
 		}
 
-		deviceString := makeDeviceString(request.GetDevice())
+		deviceString, err := makeDeviceString(request.GetDevice())
+		if err != nil {
+			logger.Error("Problem creating device string", "error", err.Error())
+			return proto.CompositeMessage{
+				Message: proto_errors.NewInternalError("Unknown device"),
+			}
+		}
 		userKey := makeUserKey(request.GetUserId())
 		bucketKey := makeBucketKey(userKey, bucketTag(0))
 		deviceKey := makeUserDeviceKey(userKey, deviceString)
@@ -57,12 +73,12 @@ func (s *presenceServiceHandlers) SetUserStatusHandler() service.MessageHandler 
 			s.redisConn.Send(redisutil.Expire, deviceKey, uint(defaultTimeout.Seconds()))
 			_, err = s.redisConn.Do(redisutil.Exec)
 			if err != nil {
-				return makeUpdatingUserPresenceError("online", err)
+				return makeUpdatingUserPresenceError(logger, "online", err)
 			}
 		} else {
 			_, err := s.redisConn.Do(redisutil.Del, deviceKey)
 			if err != nil {
-				return makeUpdatingUserPresenceError("offline", err)
+				return makeUpdatingUserPresenceError(logger, "offline", err)
 			}
 		}
 
@@ -71,16 +87,20 @@ func (s *presenceServiceHandlers) SetUserStatusHandler() service.MessageHandler 
 	})
 }
 
-func makeUpdatingUserPresenceError(status string, err error) proto.CompositeMessage {
-	errorString := fmt.Sprintf("Problem updating user presence: %s", status)
-	log.Printf("%s: %s", errorString, err)
+func makeUpdatingUserPresenceError(logger log.Logger, status string, err error) proto.CompositeMessage {
+	errorString := "Problem updating user presence"
+	logger.Error(errorString, log.Ctx{"status": status, "error": err.Error()})
 	return proto.CompositeMessage{
-		Message: proto_errors.NewInternalError(fmt.Sprintf("%s.", errorString)),
+		Message: proto_errors.NewInternalError(fmt.Sprintf(errorString, errorString)),
 	}
 }
 
-func makeDeviceString(device *proto_presence.Device) string {
-	return fmt.Sprintf("%s:%s", device.GetType().String(), getIdForDevice(device))
+func makeDeviceString(device *proto_presence.Device) (string, error) {
+	deviceId, err := getIdForDevice(device)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s:%s", device.GetType().String(), deviceId), nil
 }
 
 func makeUserKey(userId string) string {
@@ -100,31 +120,36 @@ func makeUserDeviceKey(userKey, deviceString string) string {
 	return fmt.Sprintf("%s:%s", userKey, deviceString)
 }
 
-func getIdForDevice(device *proto_presence.Device) string {
+func getIdForDevice(device *proto_presence.Device) (string, error) {
 	if device.GetType() == proto_presence.Device_ANDROID_GCM {
-		return device.GetGcmRegistrationId()
+		return device.GetGcmRegistrationId(), nil
 	}
-	log.Fatalf("Unknown device type.")
-	return ""
+	return "", fmt.Errorf("Unknown device type: ", device.GetType())
 }
 
 func (s *presenceServiceHandlers) GetUserDevicesHandler() service.MessageHandler {
 	return service.MessageHandlerFunc(func(msg *proto.Message) proto.CompositeMessage {
+		ctx, cancel := context.WithTimeout(reqcontext.NewContext(context.Background(), msg), requestTimeout)
+		defer cancel()
+
+		logger := reqcontext.ContextLogger(ctx)
+
 		var request proto_presence.GetUserDevicesRequest
 		err := msg.Unmarshal(&request)
 		if err != nil {
-			log.Println(err)
+			logger.Warn(err.Error())
 			return proto.CompositeMessage{
 				Message: proto_errors.NewMalformedMessage(request.GetMessageType()),
 			}
 		}
-		log.Printf("Getting devices for user [user_id=%s]", request.GetUserId())
+		userId := request.GetUserId()
+		logger.Info("Getting devices for user", "user_id", userId)
 
-		userKey := makeUserKey(request.GetUserId())
+		userKey := makeUserKey(userId)
 		bucketKeys := activeBucketKeys(userKey, numActiveBuckets)
 		deviceList, err := redis.Strings(s.redisConn.Do(redisutil.SUnion, bucketKeys...))
 		if err != nil {
-			return makeGettingUserDevicesError(err)
+			return makeGettingUserDevicesError(logger, userId, err)
 		}
 
 		devices := make([]*proto_presence.Device, 0)
@@ -132,12 +157,12 @@ func (s *presenceServiceHandlers) GetUserDevicesHandler() service.MessageHandler
 			deviceKey := makeUserDeviceKey(userKey, deviceString)
 			deviceExists, err := redis.Bool(s.redisConn.Do(redisutil.Exists, deviceKey))
 			if err != nil {
-				return makeGettingUserDevicesError(err)
+				return makeGettingUserDevicesError(logger, userId, err)
 			}
 			if deviceExists {
 				device, err := parseDeviceString(deviceString)
 				if err != nil {
-					return makeGettingUserDevicesError(err)
+					return makeGettingUserDevicesError(logger, userId, err)
 				}
 				devices = append(devices, device)
 			}
@@ -158,11 +183,11 @@ func activeBucketKeys(userKey string, num uint) []interface{} {
 	return keys
 }
 
-func makeGettingUserDevicesError(err error) proto.CompositeMessage {
+func makeGettingUserDevicesError(logger log.Logger, userId string, err error) proto.CompositeMessage {
 	errorString := "Problem retrieving user's devices"
-	log.Printf("%s: %s", errorString, err)
+	logger.Error(errorString, log.Ctx{"user_id": userId, "error": err.Error()})
 	return proto.CompositeMessage{
-		Message: proto_errors.NewInternalError(fmt.Sprintf("%s.", errorString)),
+		Message: proto_errors.NewInternalError(fmt.Sprintf(errorString, errorString)),
 	}
 }
 
