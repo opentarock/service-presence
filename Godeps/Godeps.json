@@ -1,0 +1,57 @@
+{
+	"ImportPath": "github.com/opentarock/service-presence",
+	"GoVersion": "go1.3.3",
+	"Deps": [
+		{
+			"ImportPath": "code.google.com/p/go-uuid/uuid",
+			"Comment": "null-12",
+			"Rev": "7dda39b2e7d5e265014674c5af696ba4186679e9"
+		},
+		{
+			"ImportPath": "code.google.com/p/go.net/context",
+			"Comment": "null-153",
+			"Rev": "a35a4571eb78502ce9195641da205f1ea0c5e453"
+		},
+		{
+			"ImportPath": "code.google.com/p/gogoprotobuf/proto",
+			"Rev": "6c980277330804e94257ac7ef70a3adbe1641059"
+		},
+		{
+			"ImportPath": "github.com/garyburd/redigo/redis",
+			"Rev": "95b854181b2a1483d2b5b20c6af36ae03f8cd5f5"
+		},
+		{
+			"ImportPath": "github.com/op/go-nanomsg",
+			"Rev": "56d628e7c641959b9dc713a83e21dc178aee25bd"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/proto",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/proto_errors",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/proto_headers",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/proto_presence",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/reqcontext",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "github.com/opentarock/service-api/go/service",
+			"Rev": "e2a267d57fb9fe28de2c54d6b40198a3a4c8affe"
+		},
+		{
+			"ImportPath": "gopkg.in/inconshreveable/log15.v2",
+			"Comment": "v2.4",
+			"Rev": "574f2561514e06d66f532fce5c7f776f7c7939b3"
+		}
+	]
+}
