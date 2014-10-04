@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime/pprof"
@@ -30,7 +31,7 @@ func main() {
 
 	log.SetFlags(log.Ldate | log.Lmicroseconds)
 
-	pool := redisutil.NewPool("localhost:6379")
+	pool := redisutil.NewPool(newRedisAddress())
 	defer pool.Close()
 
 	notifyService := nservice.NewRepService(nservice.MakeServiceBindAddress(nservice.PresenceServiceDefaultPort))
@@ -49,4 +50,22 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 	sig := <-c
 	log.Printf("Interrupted by %s", sig)
+}
+
+func newRedisAddress() string {
+	const defaultAddress = "localhost:6379"
+	v := os.Getenv("REDIS_PORT")
+	addr, err := parseRedisAddress(v)
+	if v == "" || err != nil {
+		return defaultAddress
+	}
+	return addr
+}
+
+func parseRedisAddress(rawUrl string) (string, error) {
+	u, err := url.Parse(rawUrl)
+	if err != nil {
+		return "", err
+	}
+	return u.Host, nil
 }
