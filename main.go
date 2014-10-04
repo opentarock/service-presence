@@ -34,17 +34,17 @@ func main() {
 	pool := redisutil.NewPool(newRedisAddress())
 	defer pool.Close()
 
-	notifyService := nservice.NewRepService(nservice.MakeServiceBindAddress(nservice.PresenceServiceDefaultPort))
+	presenceService := nservice.NewRepService(nservice.MakeServiceBindAddress(nservice.PresenceServiceDefaultPort))
 
 	handlers := service.NewPresenceServiceHandlers(device.NewRedisRepository(pool))
-	notifyService.AddHandler(proto_presence.UpdateUserStatusRequestMessage, handlers.SetUserStatusHandler())
-	notifyService.AddHandler(proto_presence.GetUserDevicesRequestMessage, handlers.GetUserDevicesHandler())
+	presenceService.AddHandler(proto_presence.UpdateUserStatusRequestMessage, handlers.SetUserStatusHandler())
+	presenceService.AddHandler(proto_presence.GetUserDevicesRequestMessage, handlers.GetUserDevicesHandler())
 
-	err := notifyService.Start()
+	err := presenceService.Start()
 	if err != nil {
 		log.Fatalf("Error starting presence service: %s", err)
 	}
-	defer notifyService.Close()
+	defer presenceService.Close()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
