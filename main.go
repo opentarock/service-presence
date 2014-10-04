@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"runtime/pprof"
 
-	"github.com/garyburd/redigo/redis"
-
 	"github.com/opentarock/service-api/go/proto_presence"
 	nservice "github.com/opentarock/service-api/go/service"
+	"github.com/opentarock/service-presence/device"
 	"github.com/opentarock/service-presence/service"
+	"github.com/opentarock/service-presence/util/redisutil"
 )
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -30,19 +30,16 @@ func main() {
 
 	log.SetFlags(log.Ldate | log.Lmicroseconds)
 
-	redisConn, err := redis.Dial("tcp", "localhost:6379")
-	if err != nil {
-		log.Fatalf("Problem connecting to redis server: %d", err)
-	}
-	defer redisConn.Close()
+	pool := redisutil.NewPool("localhost:6379")
+	defer pool.Close()
 
 	notifyService := nservice.NewRepService(nservice.MakeServiceBindAddress(nservice.PresenceServiceDefaultPort))
 
-	handlers := service.NewPresenceServiceHandlers(redisConn)
+	handlers := service.NewPresenceServiceHandlers(device.NewRedisRepository(pool))
 	notifyService.AddHandler(proto_presence.UpdateUserStatusRequestMessage, handlers.SetUserStatusHandler())
 	notifyService.AddHandler(proto_presence.GetUserDevicesRequestMessage, handlers.GetUserDevicesHandler())
 
-	err = notifyService.Start()
+	err := notifyService.Start()
 	if err != nil {
 		log.Fatalf("Error starting presence service: %s", err)
 	}

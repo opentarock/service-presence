@@ -14,4 +14,5 @@ const (
 	Exists   = "EXISTS"
 	Watch    = "WATCH"
 	SUnion   = "SUNION"
+	Ping     = "PING"
 )
